@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "id": "xingranya.maibot-voice-reply",
   "name": "语音回复",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "把机器人的文字回复自动转成语音发送。支持本地离线 TTS（cosyvoice.cpp）、SiliconFlow、小米 MiMo 五种引擎，带频率控制、群排除、内容过滤与音频后处理。",
   "author": {
     "name": "xingranya",
