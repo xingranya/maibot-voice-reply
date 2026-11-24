@@ -1,0 +1,120 @@
+# ─────────────────────────────────────────────────────────────
+# 语音回复插件配置
+#
+# 首次启动会自动从本文件复制出 config.toml。修改 config.toml 后
+# 在 WebUI 插件配置页保存一次即可热重载，不必重启 Bot。
+# ─────────────────────────────────────────────────────────────
+
+[plugin]
+enabled = true
+config_version = "1.0.0"
+
+
+# ────────────────────────── 引擎与音色 ──────────────────────────
+[engine]
+# cvcpp  = 本地 cosyvoice.cpp，离线免费，4 核 ARM 上 28 字约 20 秒
+# sf     = SiliconFlow CosyVoice2，0.7–2.5 秒返回，¥0.05/千字符
+# clone  = 小米 MiMo 音色复刻，参考音频直传
+# preset = 小米 MiMo 预置音色
+# design = 小米 MiMo 文字设计音色
+voice_mode = "cvcpp"
+
+# ── 本地 cosyvoice.cpp ──
+# 容器内访问宿主机用 172.17.0.1；同机部署可填 127.0.0.1
+cv_endpoint = "http://172.17.0.1:18091"
+cv_speed = 1.1
+cv_timeout_seconds = 110.0
+
+# ── SiliconFlow ──
+# sf_voice_uri 建好后填进来，避免每次启动重新上传参考音频
+sf_api_key = ""
+sf_api_base_url = "https://api.siliconflow.cn/v1"
+sf_model = "FunAudioLLM/CosyVoice2-0.5B"
+sf_voice_uri = ""
+# 留空 sf_voice_uri 时用这个参考音频（voices 目录下的文件名，不含扩展名）
+sf_ref_audio = ""
+# 参考音频的逐字文本，必须与音频内容完全一致，否则会念出参考音频原话
+sf_prompt_text = ""
+sf_sample_rate = 32000
+
+# ── 小米 MiMo ──
+# 文档：https://mimo.mi.com/docs/zh-CN/api/audio/tts-post
+# 目标文本必须放 role:assistant，风格指令放 role:user
+mimo_api_key = ""
+mimo_api_base_url = "https://api.xiaomimimo.com/v1"
+# 预置音色：mimo_default / 冰糖 / 茉莉 / 苏打 / 白桦 / Mia / Chloe / Milo / Dean
+preset_voice = "冰糖"
+# 复刻模式：voices 目录下的音频名，不含扩展名，仅支持 mp3 / wav，base64 后不超过 10MB
+clone_voice = ""
+# 设计模式：用文字描述音色，如「二十岁出头的女生，声音清亮偏甜，语速偏快」
+design_voice_description = ""
+# 写进 audio.speed，0 = 不指定走服务端默认
+mimo_speed = 0.0
+# 音频标签，写在 assistant 文本开头，如「（开心）」；留空不加
+mimo_tag = ""
+# 仅 design 模式有效
+mimo_optimize_text_preview = false
+
+# 参考音频目录（相对插件目录），支持 .wav / .mp3
+voices_dir = "voices"
+# 强制指定默认音色，留空则按引擎自动推导
+default_voice = ""
+
+
+# ────────────────────────── 语气与文本 ──────────────────────────
+[style]
+# 写给 TTS 的表演指令，多套用 | 分隔
+style = "像跟熟人随口聊天，带点笑意和真实的情绪，语速自然，句子说完音调自然往下走|像跟熟人聊天带笑意，语速自然有快有慢，逗号处自然停顿，句子说完音调下沉|像跟朋友当面聊天，语气放松带点懒散，语速自然，句子说完音调往下落"
+style_rotate = true
+clean_punctuation = true
+strip_latin = true
+# 多一次 LLM 调用，会增加延迟
+oral_rewrite = false
+oral_model = ""
+
+
+# ────────────────────────── 自动转语音 ──────────────────────────
+[auto]
+# 0 = 关闭自动转语音（工具仍可手动调用）；1 = 每条都转
+probability = 0.3
+# 太短的回复（如「好」）没有起伏空间，听起来像念稿
+min_chars = 12
+# 0 = 不限制。长句本地合成会很慢，建议 50 以内
+max_chars = 50
+in_group = true
+in_private = true
+# 这些群只发文字和表情包，群号用逗号分隔
+exclude_groups = ""
+# 转语音后把原消息的表情包补发出去
+keep_emoji = true
+# 同一会话两次自动语音的最小间隔（秒）
+cooldown_seconds = 30
+# 同一会话每小时最多自动语音条数，0 = 不限制
+max_per_hour = 60
+
+
+# ────────────────────────── 内容过滤 ──────────────────────────
+[filter]
+# 命中任一正则就跳过：链接、合并转发、各种占位符念出来毫无意义
+skip_patterns = "https?://|www\\.|b23\\.tv|t\\.cn|\\[CQ:|【合并转发|【图片|【文件|【语音|【链接|【卡片|【视频|【音乐|\\[图片|\\[文件|\\[转发|\\[链接"
+# 中文占比低于该值就跳过，避免朗读纯英文或符号串；0 = 不限制
+min_chinese_ratio = 0.6
+# 必须含 emoji，否则带表情包的回复会被整体跳过
+allow_components = "text,at,reply,emoji"
+
+
+# ────────────────────────── 音频后处理 ──────────────────────────
+[audio]
+# 目标峰值电平，负值启用后处理；填 0 或正数表示关闭
+peak_db = -1.5
+# 目标响度（RMS）
+rms_db = -18.0
+# 高通 160Hz 去喷麦 + 6kHz 搁架 -6dB 压电流音 + 11.5kHz 低通砍毛刺
+denoise = true
+# 本地引擎串行推理，排队超过这个时长就放弃本次语音、回退成文字
+# 一句 50 字要 40s 左右，排三个就超过发送窗口了，45s 是实测的合理上限
+queue_wait_seconds = 45.0
+# 口音风险超阈值时重试次数，0 = 不重试（本地引擎建议 0，云端可设 2）
+accent_retry = 0
+# 口音风险阈值，越低越严格；10.0 是实测的宽松上限
+accent_risk_max = 10.0

@@ -1,0 +1,5 @@
+# 运行时依赖
+# numpy 与 scipy 由 MaiBot 宿主容器提供（已自带 numpy 2.5.5 + scipy 1.18.1），
+# 用于 core/audio_post.py 与 core/accent_guard.py 的滤波与 F0 分析。
+# 不要把 numpy / scipy 写进本文件：版本冲突会导致容器内的原生扩展加载失败。
+aiohttp>=3.9

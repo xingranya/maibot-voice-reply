@@ -1,0 +1,117 @@
+maibot-voice-reply
+Copyright (c) 2026 xingranya
+
+本插件以 MIT 许可证分发。完整条款见同目录 LICENSE 文件。
+
+本文件列出本插件运行时涉及的全部第三方组件、其许可证与用途。分发本插件或
+其衍生物时，请保留本文件。
+
+================================================================================
+一、本插件原创代码
+================================================================================
+
+组件        maibot-voice-reply（插件本体）
+许可证      MIT
+版权        Copyright (c) 2026 xingranya
+用途        MaiBot 的 AI 语音回复插件
+链接        https://github.com/xingranya/maibot-voice-reply
+
+组件        core/audio_post.py
+许可证      MIT
+版权        Copyright (c) 2026 xingranya
+用途        WAV 后处理：高通/搁架/低通滤波 + 峰值与响度归一化
+链接        本项目原创
+
+组件        core/accent_guard.py
+许可证      MIT
+版权        Copyright (c) 2026 xingranya
+用途        口音风险检测：句尾上扬（台湾腔）F0 斜率与音域分析
+链接        本项目原创
+
+================================================================================
+二、运行时依赖（Python 包）
+================================================================================
+
+组件        numpy
+许可证      BSD-3-Clause
+版权        Copyright (c) 2005-2024, NumPy Developers
+用途        音频采样数组运算、峰值/响度统计、软限幅
+链接        https://numpy.org/
+说明        MaiBot 容器内已自带 numpy 2.5.5，无需单独安装。
+
+组件        scipy
+许可证      BSD-3-Clause
+版权        Copyright (c) 2001-2024, SciPy Developers
+用途        Butterworth 滤波器设计（butter）、零相位滤波（sosfiltfilt / filtfilt）
+链接        https://scipy.org/
+说明        MaiBot 容器内已自带 scipy 1.18.1，无需单独安装。
+
+组件        aiohttp
+许可证      Apache-2.0
+版权        Copyright (c) aio-libs contributors
+用途        异步 HTTP 客户端，调用本地 cvcpp 服务、SiliconFlow 与小米 MiMo API
+链接        https://docs.aiohttp.org/
+
+================================================================================
+三、运行宿主
+================================================================================
+
+组件        MaiBot（主程序）
+许可证      GPL-3.0
+版权        Copyright (c) MaiBot contributors
+用途        插件运行环境；本插件通过其 send_service 与插件加载机制接入
+链接        https://github.com/MaiBot
+
+组件        maibot-plugin-sdk
+许可证      LGPL-3.0-only
+版权        Copyright (c) MaiBot contributors
+用途        插件 SDK：PluginConfigBase、Hook 注册、Tool 注册、WebUI 卡片接口
+链接        https://github.com/MaiBot
+
+许可证边界说明
+--------------
+本插件通过 SDK 的公开接口与主程序交互，不链接、不修改主程序源码，因此以
+MIT 分发。使用者若把本插件与 GPL-3.0 的 MaiBot 一同分发，整体分发物需遵守
+GPL-3.0；单独分发本插件不受此约束。
+
+================================================================================
+四、可选后端
+================================================================================
+
+组件        cosyvoice.cpp（Lourdle/cosyvoice.cpp）
+许可证      MIT
+版权        Copyright (c) Lourdle
+用途        voice_mode = "cvcpp" 时提供本地离线 TTS HTTP 服务
+链接        https://github.com/Lourdle/cosyvoice.cpp
+说明        独立进程，本插件仅通过 HTTP 调用，不包含其代码。
+
+组件        Fun-CosyVoice3-0.5B 模型权重（FunAudioLLM）
+许可证      Apache-2.0
+版权        Copyright (c) FunAudioLLM
+用途        voice_mode = "cvcpp" 时由 cosyvoice.cpp 加载的模型权重
+链接        https://huggingface.co/FunAudioLLM
+说明        模型权重不随本插件分发。
+
+组件        CosyVoice2-0.5B（SiliconFlow 托管）
+许可证      Apache-2.0
+版权        Copyright (c) FunAudioLLM
+用途        voice_mode = "sf" 时的云端合成模型
+链接        https://www.siliconflow.cn/
+说明        由 SiliconFlow 托管，本插件仅通过其 /v1/audio/speech 接口调用。
+
+组件        小米 MiMo TTS（mimo-v2.5-tts / -voiceclone / -voicedesign）
+许可证      商业 API，按其服务条款
+版权        Copyright (c) Xiaomi
+用途        voice_mode = "clone" / "preset" / "design" 时的云端合成服务
+链接        https://api.xiaomimimo.com/
+文档        https://mimo.mi.com/docs/zh-CN/api/audio/tts-post
+说明        商业服务，使用需遵守小米 MiMo 的服务条款与计费规则。
+            预置音色名、音频标签词表、导演模式语法均由该服务定义，不随本插件分发。
+
+================================================================================
+五、容器环境说明
+================================================================================
+
+MaiBot 容器内没有 ffmpeg、pydub、librosa、soundfile 这几个包与二进制。本插件的
+全部音频处理使用 numpy + scipy 直接操作 16-bit PCM WAV，不依赖任何外部二进制或
+原生扩展。
