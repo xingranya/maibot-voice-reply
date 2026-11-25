@@ -2,6 +2,35 @@
 
 本文件记录 `maibot-voice-reply` 的版本变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.0] - 2026-11-25
+
+### 新增
+
+- **用量统计**（`core/usage.py` + `[usage]` 配置节）：每次合成写进 MaiBot 的
+  `llm_usage`（明细）与 `model_task_usage`（分钟级可靠性），字段口径与主程序一致。
+  - `request_type` 用 `plugin.xingranya.maibot-voice-reply`，WebUI 的模型消耗页
+    归到「插件 xingranya.maibot-voice-reply」板块；`cssqy.token-usage-report`
+    按 `plugin` 前缀自动归到「插件」分组，无需改它的配置。
+  - `task_name` 用 `tts`，与主程序原生语音合成分工同名。
+  - `prompt_tokens` / `total_tokens` 记合成文本的字符数（TTS 没有 token 概念），
+    `completion_tokens` 恒为 0，`cost` 按 `cost_per_1k_chars` 折算。
+  - 缓存命中计一次调用（`time_cost = 0`），可用 `count_cache_hits` 关掉。
+  - 失败尝试只进 `model_task_usage` 的 `failure_count`，不进 `llm_usage`。
+  - 写库异常只记一条 warning，绝不影响语音是否发出。
+- `_manifest.json` 声明 `database.save` / `database.get` / `database.query` 三项能力。
+
+### 变更
+
+- 版本号 `1.0.1` → `1.1.0`（新增功能，向后兼容）。
+
+### 测试
+
+- 新增 `tests/test_usage.py`（14 项）与 `TestUsageReporting`（11 项），
+  覆盖字段口径、同分钟累加、缓存命中、写库失败兜底、warning 只报一次。
+- 全量 232 项通过。
+
+---
+
 ## [1.0.1] - 2026-11-25
 
 ### 修复

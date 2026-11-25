@@ -41,6 +41,7 @@ from .core.cache import AudioCache
 from .core.config import VoicePluginConfig
 from .core.ratelimit import RateLimiter
 from .core.tts import TTSService, normalize_audio_base64
+from .core.usage import UsageReporter
 
 PLUGIN_DIR = Path(__file__).resolve().parent
 
@@ -71,6 +72,7 @@ class VoiceReplyPlugin(MaiBotPlugin):
         self._sf_uploaded: Dict[str, str] = {}
         self._last_health: Dict[str, Any] = {}
         self._cache: Optional[AudioCache] = None
+        self._usage: Optional[UsageReporter] = None
         # 本地引擎是单进程串行推理，并发请求只会互相拖慢，这里排队
         self._synth_lock = asyncio.Lock()
 
@@ -92,6 +94,7 @@ class VoiceReplyPlugin(MaiBotPlugin):
         self.default_voice = self._resolve_default_voice()
         self._refresh_skip_regex()
         self._cache = self._build_cache()
+        self._usage = self._build_usage_reporter()
 
         self.ctx.logger.info(
             "语音插件已加载：引擎=%s，默认音色=%s，参考音频=%d 个",
@@ -147,6 +150,35 @@ class VoiceReplyPlugin(MaiBotPlugin):
         self.ctx.logger.info(
             "配置已热更新：引擎=%s，默认音色=%s", engine.voice_mode, self.default_voice or "(空)"
         )
+
+    def _build_usage_reporter(self) -> Optional[UsageReporter]:
+        """按配置构造用量上报器；关闭时返回 None。"""
+        if not self.config.usage.enabled:
+            return None
+        return UsageReporter(self.ctx, self._plugin_identifier())
+
+    def _plugin_identifier(self) -> str:
+        """取插件 ID 用于统计归属，取不到时退回固定名。"""
+        try:
+            return str(self.ctx.plugin_id or "").strip() or "xingranya.maibot-voice-reply"
+        except Exception:  # noqa: BLE001
+            return "xingranya.maibot-voice-reply"
+
+    def _usage_labels(self, mode: str, model: str) -> tuple[str, str]:
+        """给出统计里的（模型名，供应商名）：配置优先，否则按引擎推。"""
+        usage = self.config.usage
+        default_provider = {
+            "cvcpp": "本地 cosyvoice.cpp",
+            "sf": "SiliconFlow",
+            "clone": "小米 MiMo",
+            "preset": "小米 MiMo",
+            "design": "小米 MiMo",
+        }.get(mode, mode or "unknown")
+        default_model = model or {
+            "cvcpp": "cosyvoice3-cvcpp",
+            "sf": self.config.engine.sf_model or "CosyVoice2-0.5B",
+        }.get(mode, "voice-reply")
+        return (usage.model_name.strip() or default_model, usage.provider_name.strip() or default_provider)
 
     def _build_cache(self) -> Optional[AudioCache]:
         """按当前配置构造音频缓存；关闭时返回 None。"""
@@ -399,6 +431,7 @@ class VoiceReplyPlugin(MaiBotPlugin):
                     "音频缓存命中：%d 字，%d KB，命中率 %.1f%%",
                     len(text), len(hit) // 1024, cache.stats()["hit_rate"] * 100,
                 )
+                await self._report_cache_hit(text, mode)
                 return {
                     "success": True,
                     "audio_base64": "data:audio/wav;base64," + base64.b64encode(hit).decode(),
@@ -421,6 +454,7 @@ class VoiceReplyPlugin(MaiBotPlugin):
             if cache is not None:
                 hit = cache.get(cache_key)
                 if hit:
+                    await self._report_cache_hit(text, mode)
                     return {
                         "success": True,
                         "audio_base64": "data:audio/wav;base64," + base64.b64encode(hit).decode(),
@@ -440,6 +474,52 @@ class VoiceReplyPlugin(MaiBotPlugin):
         finally:
             self._synth_lock.release()
 
+    async def _synthesize_and_report(
+        self, text: str, voice_key: str, ref_audio: str, mode: str, style_instruction: str
+    ) -> Dict[str, Any]:
+        """调一次引擎，并把这次调用的结果记进统计表。
+
+        统计只是附加信息：写库失败不能影响语音是否发出，所以这里吞掉上报异常。
+        """
+        result = await self._synthesize(text, voice_key, ref_audio, mode, style_instruction)
+        reporter = self._usage
+        if reporter is None:
+            return result
+
+        model, provider = self._usage_labels(mode, str(result.get("model") or ""))
+        duration = float(result.get("elapsed_ms") or 0) / 1000.0
+        try:
+            if result.get("success") and result.get("audio_base64"):
+                chars = len(text)
+                await reporter.record_success(
+                    text=text,
+                    model=model,
+                    provider=provider,
+                    duration=duration,
+                    cost=chars / 1000.0 * max(0.0, float(self.config.usage.cost_per_1k_chars)),
+                    session_id=str(result.get("session_id") or ""),
+                )
+            else:
+                await reporter.record_failure(
+                    model=model, provider=provider, duration=duration
+                )
+        except Exception as exc:  # noqa: BLE001
+            self.ctx.logger.warning("记录语音用量失败（不影响发送）：%s", exc)
+        return result
+
+    async def _report_cache_hit(self, text: str, mode: str) -> None:
+        """缓存命中时记一次零耗时调用，让统计里的调用次数对得上实际发出的语音。"""
+        reporter = self._usage
+        if reporter is None or not self.config.usage.count_cache_hits:
+            return
+        model, provider = self._usage_labels(mode, "")
+        try:
+            await reporter.record_success(
+                text=text, model=model, provider=provider, duration=0.0, cost=0.0, cached=True
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.ctx.logger.warning("记录语音缓存命中失败：%s", exc)
+
     async def _synthesize_locked(
         self, text: str, voice_key: str, ref_audio: str, mode: str, style_instruction: str
     ) -> Dict[str, Any]:
@@ -450,7 +530,9 @@ class VoiceReplyPlugin(MaiBotPlugin):
         best_risk = float("inf")
 
         for attempt in range(1, attempts + 1):
-            result = await self._synthesize(text, voice_key, ref_audio, mode, style_instruction)
+            result = await self._synthesize_and_report(
+                text, voice_key, ref_audio, mode, style_instruction
+            )
             if not result.get("success") or not result.get("audio_base64"):
                 status = result.get("status")
                 if status in TTSService.RETRYABLE_STATUS or "429" in str(result.get("error", "")):

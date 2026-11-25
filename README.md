@@ -31,6 +31,7 @@ MaiBot 默认只发文字。群里聊天时文字读不出情绪，长句也没�
 | 13 | WebUI 状态卡 | `@HomeCard` 首页卡片，列出常用命令与引擎清单（静态内容） |
 | 14 | 配置页运行时控件 | `ConfigWidget` 健康探测按钮：cvcpp 探 HTTP，云端真发一句「测试一下。」 |
 | 15 | 跨插件合成 API | `voice_synthesize`（`public=True`），返回 WAV base64 但不发送，供其它插件复用 |
+| 16 | 用量统计 | 每次合成写进 MaiBot 的 `llm_usage` 与 `model_task_usage`，模型消耗页与 `cssqy.token-usage-report` 都能看到 |
 
 ---
 
@@ -114,6 +115,8 @@ maibot-voice-reply/
     audio_post.py     # WAV 后处理（滤波+响度归一化）
     accent_guard.py   # 口音风险检测（台湾腔上扬尾音）
     ratelimit.py      # 每会话冷却与每小时上限
+    usage.py          # 合成用量写入 MaiBot 统计表
+    cache.py          # 合成结果 LRU 缓存
   voices/             # 参考音频目录（.wav/.mp3）
   tests/              # 单元测试
   LICENSE
@@ -352,6 +355,33 @@ https?://|www\.|b23\.tv|t\.cn|\[CQ:|【合并转发|【图片|【文件|【语�
 | `denoise` | bool | `true` | 启用滤波降噪（高通去喷麦 + 高频搁架压电流音 + 低通砍毛刺） |
 | `accent_retry` | int | `0` | 口音检测不通过时的重试次数，`0` 表示不检测 |
 | `accent_risk_max` | float | `10.0` | 口音风险阈值，超过则重试。越低越严格 |
+
+### `[usage]` 用量统计
+
+语音合成不走主程序的模型调用链，默认不会出现在 WebUI 的「模型消耗」里。开启这一节后，插件自己把每次调用写进 `llm_usage`（明细）与 `model_task_usage`（分钟级可靠性），字段口径与主程序完全一致。
+
+| 名称 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `enabled` | bool | `true` | 是否记录用量 |
+| `model_name` | str | `""` | 统计里显示的模型名。留空按引擎推：`cvcpp → cosyvoice3-cvcpp`，`sf → 实际模型名`，`mimo → mimo-v2.5-tts*` |
+| `provider_name` | str | `""` | 统计里显示的供应商名。留空按引擎推：`cvcpp → 本地 cosyvoice.cpp`，`sf → SiliconFlow`，`mimo → 小米 MiMo` |
+| `cost_per_1k_chars` | float | `0.0` | 每千字符费用（元）。本地引擎填 `0` 即为免费；SiliconFlow CosyVoice2 约 `0.05` |
+| `count_cache_hits` | bool | `true` | 缓存命中是否也计一次调用（不计成功时长，因为它没真跑推理） |
+
+写入口径：
+
+| 字段 | 取值 |
+|---|---|
+| `request_type` | `plugin.xingranya.maibot-voice-reply`，WebUI 归到「插件 xingranya.maibot-voice-reply」 |
+| `task_name` | `tts`，与主程序原生语音合成分工同名 |
+| `prompt_tokens` / `total_tokens` | 合成文本的字符数（TTS 没有 token 概念） |
+| `completion_tokens` | 恒为 `0` |
+| `time_cost` | 本次合成耗时（秒），缓存命中记 `0` |
+| `cost` | `字符数 / 1000 × cost_per_1k_chars` |
+
+失败尝试只进 `model_task_usage` 的 `failure_count`，不进 `llm_usage` —— 与主程序「明细只记成功、可靠性成功失败都记」的分工一致。
+
+> **需要的能力**：`database.save`、`database.get`、`database.query`。`_manifest.json` 已声明；写库失败只记一条 warning，不影响语音发出。
 
 ---
 
@@ -656,6 +686,18 @@ aiohttp 的 `json=` 参数默认 `ensure_ascii=True`，中文会被转成 `\u4ec
 修法：客户端改用 `data=json.dumps(..., ensure_ascii=False).encode("utf-8")` 直接发 UTF-8。如果你自己写了对接 `cvcpp` 的服务端，也要检查 `\uXXXX` 的解码逻辑——正确做法是解码后 `p += 6`，跳过 `\u` 加四位数字。
 
 验证方式：同一个短句分别用转义和非转义两种方式请求，音频时长应该基本一致（差异在 ±10% 内属正常随机波动）。
+
+### 14. 模型消耗页里看不到语音
+
+三处检查：
+
+1. `[usage] enabled` 是否为 `true`。
+2. `_manifest.json` 的 `capabilities` 是否含 `database.save` / `database.get` / `database.query`。缺任意一项，宿主会拒绝能力调用，日志里会出现 `写入模型消耗统计失败`。
+3. 用 `/语音测试` 发一句，然后看 `llm_usage` 里有没有 `request_type = 'plugin.xingranya.maibot-voice-reply'` 的行。
+
+写入是即时的，不需要等 15 分钟聚合：`GET /api/webui/statistics/models` 在落库后立刻就能查到。板块归属靠 `request_type.startswith("plugin.")`，所以显示成「插件 xingranya.maibot-voice-reply」，`cssqy.token-usage-report` 也会自动归到「插件」分组，无需额外配置。
+
+一个例外：本地 `cvcpp` 引擎的 `cost` 恒为 `0`，因为 `cost_per_1k_chars` 默认是 `0.0`。想让它显示费用就填实际电费折算单价，但通常没必要——它确实不花钱。
 
 ---
 

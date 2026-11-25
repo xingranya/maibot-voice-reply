@@ -2,8 +2,8 @@
   "manifest_version": 2,
   "id": "xingranya.maibot-voice-reply",
   "name": "语音回复",
-  "version": "1.0.1",
-  "description": "把机器人的文字回复自动转成语音发送。支持本地离线 TTS（cosyvoice.cpp）、SiliconFlow、小米 MiMo 五种引擎，带频率控制、群排除、内容过滤与音频后处理。",
+  "version": "1.1.0",
+  "description": "把机器人的文字回复自动转成语音发送。支持本地离线 TTS（cosyvoice.cpp）、SiliconFlow、小米 MiMo 五种引擎，带频率控制、群排除、内容过滤、音频后处理，并把合成用量写进 MaiBot 的模型消耗统计。",
   "author": {
     "name": "xingranya",
     "url": "https://github.com/xingranya"
@@ -23,10 +23,19 @@
     "max_version": "2.99.99"
   },
   "dependencies": [],
-  "capabilities": ["send.custom", "send.text", "llm.generate"],
+  "capabilities": [
+    "send.custom",
+    "send.text",
+    "llm.generate",
+    "database.save",
+    "database.get",
+    "database.query"
+  ],
   "i18n": {
     "default_locale": "zh-CN",
-    "supported_locales": ["zh-CN"]
+    "supported_locales": [
+      "zh-CN"
+    ]
   },
   "plugin_type": "extension",
   "display": {

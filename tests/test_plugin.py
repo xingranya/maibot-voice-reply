@@ -54,10 +54,32 @@ class FakeLogger:
         return [m for lv, m in self.records if not level or lv == level]
 
 
+class FakeDB:
+    """只实现 usage 上报用到的三个方法。"""
+
+    def __init__(self) -> None:
+        self.saved: list[tuple[str, dict[str, Any]]] = []
+        self.updated: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+
+    async def save(self, model_name: str, data: dict[str, Any]) -> None:
+        self.saved.append((model_name, data))
+
+    async def get(self, model_name: str, filters: dict[str, Any], limit: int = 1):
+        del model_name, filters, limit
+        return []
+
+    async def query(
+        self, model_name: str, query_type: str, data: dict[str, Any], filters: dict[str, Any]
+    ) -> None:
+        del query_type
+        self.updated.append((model_name, data, filters))
+
 class FakeCtx:
     def __init__(self) -> None:
         self.send = FakeSend()
         self.logger = FakeLogger()
+        self.db = FakeDB()
+        self.plugin_id = "xingranya.maibot-voice-reply"
 
     async def send_text(self, text: str, stream_id: str) -> bool:
         return await self.send.text(text, stream_id)
@@ -182,6 +204,13 @@ def make_plugin(**overrides: Any) -> P.VoiceReplyPlugin:
             "accent_retry": 0,
             "accent_risk_max": 10.0,
         },
+        "usage": {
+            "enabled": True,
+            "model_name": "",
+            "provider_name": "",
+            "cost_per_1k_chars": 0.0,
+            "count_cache_hits": True,
+        },
     }
     for section, values in overrides.items():
         base[section].update(values)
@@ -190,6 +219,7 @@ def make_plugin(**overrides: Any) -> P.VoiceReplyPlugin:
     p.tts = FakeTTS()
     p._refresh_skip_regex()
     p._cache = p._build_cache()
+    p._usage = p._build_usage_reporter()
     return p
 
 
@@ -974,3 +1004,127 @@ class TestCacheKeyStyle:
         asyncio.run(p.api_synthesize(text="同一句话", style_instruction="带笑"))
         asyncio.run(p.api_synthesize(text="同一句话", style_instruction="冷淡"))
         assert len(p.tts.calls) == 2
+
+class TestUsageReporting:
+    """合成用量必须落进统计表，且统计故障不能影响语音发送。"""
+
+    def test_success_writes_both_tables(self) -> None:
+        p = make_plugin()
+        import asyncio
+
+        asyncio.run(p.api_synthesize(text="今天下班早"))
+        db = p._ctx.db
+        assert len(db.saved) == 2
+        assert db.saved[0][0] == "ModelUsage"
+        assert db.saved[1][0] == "ModelTaskUsage"
+        row = db.saved[0][1]
+        assert row["request_type"] == "plugin.xingranya.maibot-voice-reply"
+        assert row["task_name"] == "tts"
+        assert row["prompt_tokens"] == 6  # 「今天下班早」清洗后补了句号
+        assert row["total_tokens"] == 6
+        assert row["completion_tokens"] == 0
+
+    def test_provider_label_for_cvcpp(self) -> None:
+        p = make_plugin()
+        import asyncio
+
+        asyncio.run(p.api_synthesize(text="测试一下"))
+        row = p._ctx.db.saved[0][1]
+        assert row["model_api_provider_name"] == "本地 cosyvoice.cpp"
+        assert row["model_name"] == "cosyvoice3-cvcpp"
+
+    def test_provider_label_for_sf(self) -> None:
+        p = make_plugin(
+            engine={"voice_mode": "sf", "sf_voice_uri": "speech:test:1:2"}
+        )
+        p.tts = FakeTTS()
+        import asyncio
+
+        asyncio.run(p.api_synthesize(text="测试一下"))
+        row = p._ctx.db.saved[0][1]
+        assert row["model_api_provider_name"] == "SiliconFlow"
+
+    def test_custom_labels_win(self) -> None:
+        p = make_plugin(usage={"model_name": "我的声音", "provider_name": "自建"})
+        import asyncio
+
+        asyncio.run(p.api_synthesize(text="测试一下"))
+        row = p._ctx.db.saved[0][1]
+        assert row["model_name"] == "我的声音"
+        assert row["model_api_provider_name"] == "自建"
+
+    def test_cost_from_per_1k_chars(self) -> None:
+        p = make_plugin(usage={"cost_per_1k_chars": 0.05})
+        import asyncio
+
+        asyncio.run(p.api_synthesize(text="一" * 100))
+        row = p._ctx.db.saved[0][1]
+        # 清洗会补一个句号，按 101 字计
+        assert row["cost"] == pytest.approx(101 / 1000.0 * 0.05)
+
+    def test_disabled_writes_nothing(self) -> None:
+        p = make_plugin(usage={"enabled": False})
+        import asyncio
+
+        asyncio.run(p.api_synthesize(text="测试一下"))
+        assert p._usage is None
+        assert p._ctx.db.saved == []
+
+    def test_failure_only_touches_task_usage(self) -> None:
+        p = make_plugin()
+        p.tts = FakeTTS(ok=False, error="boom")
+        import asyncio
+
+        asyncio.run(p.api_synthesize(text="失败路径"))
+        db = p._ctx.db
+        assert len(db.saved) == 1
+        assert db.saved[0][0] == "ModelTaskUsage"
+        assert db.saved[0][1]["failure_count"] == 1
+
+    def test_db_error_does_not_break_synthesis(self) -> None:
+        p = make_plugin()
+
+        class BoomDB:
+            async def save(self, *a: Any, **k: Any) -> None:
+                raise RuntimeError("db down")
+
+            async def get(self, *a: Any, **k: Any):
+                raise RuntimeError("db down")
+
+            async def query(self, *a: Any, **k: Any) -> None:
+                raise RuntimeError("db down")
+
+        p._ctx.db = BoomDB()
+        import asyncio
+
+        result = asyncio.run(p.api_synthesize(text="测试一下"))
+        assert result["success"] is True
+        assert result["audio_base64"]
+
+    def test_cache_hit_counted(self) -> None:
+        p = make_plugin()
+        import asyncio
+
+        asyncio.run(p.api_synthesize(text="测试缓存"))
+        synth_calls = len(p.tts.calls)
+        asyncio.run(p.api_synthesize(text="测试缓存"))
+        assert len(p.tts.calls) == synth_calls  # 第二次确实走了缓存
+        usage_rows = [row for name, row in p._ctx.db.saved if name == "ModelUsage"]
+        assert len(usage_rows) == 2
+        assert usage_rows[-1]["time_cost"] == 0.0
+        assert usage_rows[-1]["prompt_tokens"] > 0
+
+    def test_cache_hit_not_counted_when_disabled(self) -> None:
+        p = make_plugin(usage={"count_cache_hits": False})
+        import asyncio
+
+        asyncio.run(p.api_synthesize(text="测试缓存"))
+        before = len(p._ctx.db.saved)
+        asyncio.run(p.api_synthesize(text="测试缓存"))
+        assert len(p._ctx.db.saved) == before
+        assert p._ctx.db.updated == []
+
+    def test_plugin_id_fallback(self) -> None:
+        p = make_plugin()
+        p._ctx.plugin_id = ""
+        assert p._plugin_identifier() == "xingranya.maibot-voice-reply"

@@ -118,3 +118,21 @@ queue_wait_seconds = 45.0
 accent_retry = 0
 # 口音风险阈值，越低越严格；10.0 是实测的宽松上限
 accent_risk_max = 10.0
+
+
+# ────────────────────────── 用量统计 ──────────────────────────
+[usage]
+# 把每次合成写进 MaiBot 的模型消耗统计（llm_usage 与 model_task_usage）
+# 开启后 WebUI 的模型消耗页与 cssqy.token-usage-report 都能看到语音的
+# 调用次数、耗时和费用，板块归到「插件 xingranya.maibot-voice-reply」
+enabled = true
+# 统计里显示的模型名，留空按引擎自动取：
+#   cvcpp → cosyvoice3-cvcpp，sf → 实际模型名，mimo → mimo-v2.5-tts*
+model_name = ""
+# 统计里显示的供应商名，留空按引擎自动取
+provider_name = ""
+# 每千字符费用（元），用于折算 cost；本地 cvcpp 填 0 即为免费
+# 参考：SiliconFlow CosyVoice2-0.5B 约 0.05 元/千字符
+cost_per_1k_chars = 0.0
+# 缓存命中是否也计一次调用（缓存命中不消耗算力，但确实省了一次合成）
+count_cache_hits = true

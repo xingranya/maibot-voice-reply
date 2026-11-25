@@ -385,6 +385,53 @@ class AudioSectionConfig(PluginConfigBase):
     )
 
 
+class UsageSectionConfig(PluginConfigBase):
+    """把语音合成的消费量记进 MaiBot 的模型消耗统计。"""
+
+    __ui_label__ = "用量统计"
+
+    enabled: bool = Field(
+        default=True,
+        description="把每次合成写进 MaiBot 的模型消耗统计（llm_usage 与 model_task_usage）",
+        json_schema_extra={
+            "label": "记录用量",
+            "hint": "开启后 WebUI 的模型消耗页与 cssqy.token-usage-report 都能看到语音合成的调用次数、耗时和费用。",
+        },
+    )
+    model_name: str = Field(
+        default="",
+        description="统计里显示的模型名；留空按引擎自动取",
+        json_schema_extra={
+            "label": "模型名",
+            "hint": "留空时 cvcpp 显示 cosyvoice3-cvcpp，SiliconFlow 显示实际模型名，MiMo 显示 mimo-v2.5-tts*。",
+        },
+    )
+    provider_name: str = Field(
+        default="",
+        description="统计里显示的供应商名；留空按引擎自动取",
+        json_schema_extra={
+            "label": "供应商名",
+            "hint": "留空时 cvcpp 显示「本地 cosyvoice.cpp」，SiliconFlow 显示 SiliconFlow，MiMo 显示「小米 MiMo」。",
+        },
+    )
+    cost_per_1k_chars: float = Field(
+        default=0.0,
+        description="每千字符的费用（元），用于折算 cost 字段",
+        json_schema_extra={
+            "label": "每千字符费用(元)",
+            "hint": "本地 cvcpp 填 0 即为免费；SiliconFlow CosyVoice2 约 0.05。",
+        },
+    )
+    count_cache_hits: bool = Field(
+        default=True,
+        description="缓存命中是否也计一次调用",
+        json_schema_extra={
+            "label": "缓存命中也计数",
+            "hint": "缓存命中不消耗算力，但确实省了一次合成；关闭后只统计真实调用。",
+        },
+    )
+
+
 class VoicePluginConfig(PluginConfigBase):
     """插件根配置。"""
 
@@ -394,3 +441,4 @@ class VoicePluginConfig(PluginConfigBase):
     auto: AutoSectionConfig = Field(default_factory=AutoSectionConfig)
     filter: FilterSectionConfig = Field(default_factory=FilterSectionConfig)
     audio: AudioSectionConfig = Field(default_factory=AudioSectionConfig)
+    usage: UsageSectionConfig = Field(default_factory=UsageSectionConfig)
